@@ -9,9 +9,7 @@ personal information.
 [Data Source](https://www.kaggle.com/competitions/pii-detection-removal-from-educational-data/overview)
 
 - We will use a BERT model
-- We will fine-tune the BERT model on a dataset containing labeled personal information.
-- We will implement a full pipeline that gets a directory of text files, processes each file to detect
-  personal information, and outputs cleaned versions of the files with personal information removed or anonymized.
-- We will evaluate the system using the F5-score, instead of F1.
+- We will hopefully find a ready to use BERT model
+- We will optimize the BERT model and provide a batch processing API
 
 
