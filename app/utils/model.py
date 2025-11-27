@@ -189,3 +189,6 @@ def get_batch_outputs(model: Any, documents: Mapping[str, str]) -> Dict[str, str
             raise TypeError(f"Document '{name}' is not a string.")
         cleaned[name] = _default_batch_handler(model, text)
     return cleaned
+
+def load_model(*args, **kwargs) -> HFPiiCleaner:
+    raise NotImplementedError("Implement this function")

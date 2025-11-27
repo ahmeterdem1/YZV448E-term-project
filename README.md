@@ -44,4 +44,39 @@ The system targets the [Kaggle â€œPII Detection / Removal from Educational Dataâ
 - Plug the cleaner into a FastAPI service for batch processing.
 - Explore vLLM / Triton serving if we move to larger generative models for rule-free masking.
 
+## How to run FastAPI server for PII cleaning
 
+First start the Redis server with docker-compose:
+
+```bash
+docker-compose up -d
+```
+
+Then install the requirements:
+
+```bash
+pip install -r requirements.txt
+```
+
+Run the FastAPI server (this is run locally for now):
+
+```bash
+uvicorn app.main:app --reload
+```
+
+All endpoints are on `http://localhost:8000`. To send a text document, send a POST request to `/api/v1/process-text` 
+with the following JSON body:
+
+```json
+{
+  "text_content": "This is the text string I want to process with BERT."
+}
+```
+
+The client receives an Item ID in response to this document. Then the client can send a GET request
+to `/api/v1/text/{item_id}` to receive their document (if it is ready).
+
+Sending a GET request to `/api/v1/queue` enables the user to see the pending documents.
+
+There is a 30 second timeout on the queue. If 30 second elapses without processing, 
+the queue is flushed for processing no matter how many items there are.
