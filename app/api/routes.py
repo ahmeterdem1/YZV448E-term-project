@@ -1,6 +1,7 @@
 from fastapi import APIRouter, Depends, HTTPException, Request, BackgroundTasks
 from typing import List
 from redis.asyncio import Redis
+from loguru import logger
 
 from app.core.config import settings
 from app.schemas.task import TaskCreate, TaskResponse
@@ -41,12 +42,25 @@ async def upload_text(
     # if we had attached it there. Since we didn't attach to state in the provided main.py,
     # let's update how we retrieve it.
 
-    from app.main import ml_models
-    model = ml_models.get("bert")
-
-    service = QueueService(redis, model)
-    result = await service.enqueue_and_process(task)
-    return result
+    logger.info(f"📝 New text processing request - Length: {len(task.text_content)} chars")
+    
+    try:
+        from app.main import ml_models
+        model = ml_models.get("bert")
+        
+        if not model:
+            logger.error("❌ BERT model not loaded")
+            raise HTTPException(status_code=503, detail="Model not available")
+        
+        service = QueueService(redis, model)
+        result = await service.enqueue_and_process(task)
+        
+        logger.success(f"✅ Task created successfully - ID: {result.id}")
+        return result
+        
+    except Exception as e:
+        logger.error(f"❌ Error processing text: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 @router.get("/text/{item_id}", response_model=TaskResponse)
@@ -54,14 +68,37 @@ async def get_text_by_id(
         item_id: str,
         redis: Redis = Depends(get_redis)
 ):
-    service = QueueService(redis)
-    item = await service.get_item_by_id(item_id)
-    if not item:
-        raise HTTPException(status_code=404, detail="Item not found")
-    return item
+    logger.info(f"🔍 Retrieving task: {item_id}")
+    
+    try:
+        service = QueueService(redis)
+        item = await service.get_item_by_id(item_id)
+        
+        if not item:
+            logger.warning(f"⚠️ Task not found: {item_id}")
+            raise HTTPException(status_code=404, detail="Item not found")
+        
+        logger.success(f"✅ Task retrieved: {item_id} - Status: {item.status}")
+        return item
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"❌ Error retrieving task {item_id}: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 @router.get("/queue", response_model=List[TaskResponse])
 async def peek_queue(redis: Redis = Depends(get_redis)):
-    service = QueueService(redis)
-    return await service.get_all_queue_items()
+    logger.info("🔍 Checking queue status")
+    
+    try:
+        service = QueueService(redis)
+        items = await service.get_all_queue_items()
+        
+        logger.info(f"📋 Queue status - Items: {len(items)}")
+        return items
+        
+    except Exception as e:
+        logger.error(f"❌ Error checking queue: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
