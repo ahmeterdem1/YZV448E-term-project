@@ -56,6 +56,9 @@ class HFPiiCleaner(nn.Module):
         tokenizer_kwargs: Optional[Mapping[str, Any]] = None,
         model_kwargs: Optional[Mapping[str, Any]] = None,
     ) -> None:
+        import logging
+        logger = logging.getLogger(__name__)
+        
         super().__init__()
         self.mask_token = mask_token
         self.confidence_threshold = confidence_threshold
@@ -72,7 +75,12 @@ class HFPiiCleaner(nn.Module):
         )
 
         if device is None:
-            device = 0 if torch.cuda.is_available() else -1
+            if torch.cuda.is_available():
+                device = 0
+                logger.info(f"🚀 Using GPU: {torch.cuda.get_device_name(0)}")
+            else:
+                device = -1
+                logger.info("💻 Using CPU (GPU not available)")
 
         self.pipeline: TokenClassificationPipeline = pipeline(
             task="token-classification",
@@ -190,5 +198,34 @@ def get_batch_outputs(model: Any, documents: Mapping[str, str]) -> Dict[str, str
         cleaned[name] = _default_batch_handler(model, text)
     return cleaned
 
-def load_model(*args, **kwargs) -> HFPiiCleaner:
-    raise NotImplementedError("Implement this function")
+def load_model(
+    model_name: str = "dslim/bert-base-NER",
+    confidence_threshold: float = 0.6,
+    device: Optional[int] = None
+) -> HFPiiCleaner:
+    """
+    Load and return a configured HFPiiCleaner model.
+    
+    Args:
+        model_name: HuggingFace model name/path
+        confidence_threshold: Minimum confidence for PII detection
+        device: GPU device (-1 for CPU, 0+ for GPU)
+    """
+    import logging
+    logger = logging.getLogger(__name__)
+    
+    logger.info(f"Loading PII model: {model_name}")
+    logger.info(f"Confidence threshold: {confidence_threshold}")
+    
+    try:
+        model = HFPiiCleaner(
+            model_name_or_path=model_name,
+            confidence_threshold=confidence_threshold,
+            device=device,
+            aggregation_strategy="simple"
+        )
+        logger.info("Model loaded successfully")
+        return model
+    except Exception as e:
+        logger.error(f"Failed to load model: {e}")
+        raise
