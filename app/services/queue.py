@@ -97,7 +97,13 @@ class QueueService:
         # 2. Logic for Timeout Check (only if we have a start time)
         elif start_time_bytes:
             try:
-                start_time = datetime.fromisoformat(start_time_bytes.decode('utf-8'))
+                # Handle both string and bytes from Redis
+                if isinstance(start_time_bytes, bytes):
+                    start_time_str = start_time_bytes.decode('utf-8')
+                else:
+                    start_time_str = start_time_bytes
+                    
+                start_time = datetime.fromisoformat(start_time_str)
                 timeout_seconds = getattr(settings, "BATCH_TIMEOUT", 30)
                 elapsed = (current_time - start_time).total_seconds()
 
