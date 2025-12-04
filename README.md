@@ -80,3 +80,33 @@ Sending a GET request to `/api/v1/queue` enables the user to see the pending doc
 
 There is a 30 second timeout on the queue. If 30 second elapses without processing, 
 the queue is flushed for processing no matter how many items there are.
+
+## Logging System
+
+The application includes comprehensive logging:
+
+- **Console logs**: Colored output with timestamps
+- **File logs**: 
+  - `logs/app.log`: All application logs (rotated at 50MB, kept for 3 days)
+  - `logs/error.log`: Error logs only (rotated at 10MB, kept for 7 days)
+- **Log levels**: DEBUG, INFO, WARNING, ERROR
+- **Structured logging**: JSON format with context information
+
+### Log Features:
+- 🚀 Application startup/shutdown
+- 📝 Request processing with text length
+- 🔍 Task retrieval and status
+- 📋 Queue status monitoring
+- 🤖 BERT model inference timing
+- ❌ Error tracking with stack traces
+- ⏱️ Background task monitoring
+
+## Testing the API
+
+Run the comprehensive test script:
+
+```bash
+python test_api.py
+```
+
+This will test all endpoints and simulate real usage scenarios.
