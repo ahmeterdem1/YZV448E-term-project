@@ -1,0 +1,19 @@
+# Python
+__pycache__/
+*.py[cod]
+*.so
+
+# Virtual environments
+.venv/
+venv/
+.env
+
+# IDE
+.DS_Store
+*.swp
+
+# Project specific
+logs/
+outputs/
+data/
+models/
