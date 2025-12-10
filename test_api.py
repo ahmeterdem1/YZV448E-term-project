@@ -9,7 +9,7 @@ import json
 import time
 from typing import Dict, Any
 
-BASE_URL = "http://localhost:8000"
+BASE_URL = "http://localhost:8000/"
 
 def test_health_check():
     """Test health endpoint"""

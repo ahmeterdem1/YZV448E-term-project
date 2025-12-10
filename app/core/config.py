@@ -3,7 +3,7 @@ from pydantic_settings import BaseSettings
 
 class Settings(BaseSettings):
     PROJECT_NAME: str = "FastAPI Redis Queue"
-    REDIS_URL: str = "redis://localhost:6379/0"
+    REDIS_URL: str = "redis://host.docker.internal:6379/0"
 
     # Redis Keys
     QUEUE_NAME: str = "task_queue"  # The List (for ordering)
