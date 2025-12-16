@@ -27,37 +27,45 @@ async def upload_text(
 ):
     """
     Uploads a text string.
-    If Queue size >= BATCH_SIZE, triggers a flush automatically using the loaded BERT model.
+    Checks for text length and queue capacity limits before accepting.
+    If Queue size >= BATCH_SIZE, triggers a flush automatically.
     """
-    # Access the model loaded in lifespan via app.state (if using state)
-    # or via the global ml_models dict from main (common pattern)
+    # 1. Validation: Check Text Length
+    if len(task.text_content) > settings.MAX_TEXT_LENGTH:
+        logger.warning(f"❌ Request rejected: Text too long ({len(task.text_content)} chars)")
+        raise HTTPException(
+            status_code=413,  # Payload Too Large
+            detail=f"Text content exceeds maximum allowed length of {settings.MAX_TEXT_LENGTH} characters."
+        )
 
-    # Importing here to avoid circular imports at top level if structure is complex,
-    # but accessing via request.app is cleaner in this setup if we attached it to state.
-    # However, since we used a global dict in main, let's grab it from request.state
-    # OR simpler: use the global if available.
-
-    # Best Practice: Pass it via Request context if attached to state, or import the global.
-    # Let's rely on the main.py `ml_models` by importing it dynamically or accessing request.state
-    # if we had attached it there. Since we didn't attach to state in the provided main.py,
-    # let's update how we retrieve it.
+    # 2. Validation: Check Queue Capacity
+    # We check directly against Redis before initializing the service
+    current_queue_size = await redis.llen(settings.QUEUE_NAME)
+    if current_queue_size >= settings.MAX_QUEUE_SIZE:
+        logger.warning(f"❌ Request rejected: Queue full ({current_queue_size}/{settings.MAX_QUEUE_SIZE})")
+        raise HTTPException(
+            status_code=503,  # Service Unavailable
+            detail="System is under heavy load. Please try again later."
+        )
 
     logger.info(f"📝 New text processing request - Length: {len(task.text_content)} chars")
-    
+
     try:
         from app.main import ml_models
         model = ml_models.get("bert")
-        
+
         if not model:
             logger.error("❌ BERT model not loaded")
             raise HTTPException(status_code=503, detail="Model not available")
-        
+
         service = QueueService(redis, model)
         result = await service.enqueue_and_process(task)
-        
+
         logger.success(f"✅ Task created successfully - ID: {result.id}")
         return result
-        
+
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"❌ Error processing text: {e}")
         raise HTTPException(status_code=500, detail=str(e))
@@ -69,18 +77,18 @@ async def get_text_by_id(
         redis: Redis = Depends(get_redis)
 ):
     logger.info(f"🔍 Retrieving task: {item_id}")
-    
+
     try:
         service = QueueService(redis)
         item = await service.get_item_by_id(item_id)
-        
+
         if not item:
             logger.warning(f"⚠️ Task not found: {item_id}")
             raise HTTPException(status_code=404, detail="Item not found")
-        
+
         logger.success(f"✅ Task retrieved: {item_id} - Status: {item.status}")
         return item
-        
+
     except HTTPException:
         raise
     except Exception as e:
@@ -91,14 +99,14 @@ async def get_text_by_id(
 @router.get("/queue", response_model=List[TaskResponse])
 async def peek_queue(redis: Redis = Depends(get_redis)):
     logger.info("🔍 Checking queue status")
-    
+
     try:
         service = QueueService(redis)
         items = await service.get_all_queue_items()
-        
+
         logger.info(f"📋 Queue status - Items: {len(items)}")
         return items
-        
+
     except Exception as e:
         logger.error(f"❌ Error checking queue: {e}")
         raise HTTPException(status_code=500, detail=str(e))
