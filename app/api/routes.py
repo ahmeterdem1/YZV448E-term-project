@@ -18,7 +18,40 @@ async def get_redis() -> Redis:
         await client.close()
 
 
-@router.post("/process-text", response_model=TaskResponse, status_code=201)
+async def check_rate_limit(request: Request, redis: Redis = Depends(get_redis)):
+    """
+    Dependency to check rate limits per IP address.
+    Uses a fixed window counter in Redis.
+    """
+    client_ip = request.client.host
+    # Key format: ratelimit:<ip>
+    key = f"ratelimit:{client_ip}"
+
+    try:
+        # Increment the counter
+        # redis.incr returns the new value
+        current_count = await redis.incr(key)
+
+        # If this is the first request in the window, set the expiry
+        if current_count == 1:
+            await redis.expire(key, settings.RATE_LIMIT_WINDOW)
+
+        if current_count > settings.RATE_LIMIT_REQUESTS:
+            logger.warning(f"⛔ Rate limit exceeded for {client_ip} ({current_count}/{settings.RATE_LIMIT_REQUESTS})")
+            raise HTTPException(
+                status_code=429,  # Too Many Requests
+                detail=f"Rate limit exceeded. Maximum {settings.RATE_LIMIT_REQUESTS} requests per {settings.RATE_LIMIT_WINDOW} seconds."
+            )
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        # Fail open: If Redis fails for rate limiting, we log it but allow the request
+        # to ensure the API doesn't go down just because rate limiting logic failed.
+        logger.error(f"⚠️ Rate limit check failed: {e}")
+
+
+@router.post("/process-text", response_model=TaskResponse, status_code=201, dependencies=[Depends(check_rate_limit)])
 async def upload_text(
         request: Request,
         task: TaskCreate,
@@ -28,7 +61,7 @@ async def upload_text(
     """
     Uploads a text string.
     Checks for text length and queue capacity limits before accepting.
-    If Queue size >= BATCH_SIZE, triggers a flush automatically.
+    Rate limited to prevent DOS.
     """
     # 1. Validation: Check Text Length
     if len(task.text_content) > settings.MAX_TEXT_LENGTH:
@@ -39,7 +72,6 @@ async def upload_text(
         )
 
     # 2. Validation: Check Queue Capacity
-    # We check directly against Redis before initializing the service
     current_queue_size = await redis.llen(settings.QUEUE_NAME)
     if current_queue_size >= settings.MAX_QUEUE_SIZE:
         logger.warning(f"❌ Request rejected: Queue full ({current_queue_size}/{settings.MAX_QUEUE_SIZE})")

@@ -17,8 +17,12 @@ class Settings(BaseSettings):
     DOCUMENT_TTL: int = 86400
 
     # Safety Limits
-    MAX_QUEUE_SIZE: int = 1000  # Max items pending in queue
-    MAX_TEXT_LENGTH: int = 10000  # Max characters per request
+    MAX_QUEUE_SIZE: int = 1000
+    MAX_TEXT_LENGTH: int = 10000
+
+    # Rate Limiting
+    RATE_LIMIT_REQUESTS: int = 20  # Max requests per window
+    RATE_LIMIT_WINDOW: int = 60  # Window size in seconds
 
     class Config:
         env_file = ".env"
