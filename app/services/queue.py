@@ -16,22 +16,12 @@ class QueueService:
         self.redis = redis
         self.model = model
         self.timestamp_key = f"{settings.QUEUE_NAME}:start_time"
-        # New: Key for the distributed lock
         self.lock_key = f"{settings.QUEUE_NAME}:processing_lock"
 
-    # ... [Previous methods: _get_task_key, enqueue_and_process, check_time_limit remain unchanged] ...
-
-    # We only need to copy the helper methods if they aren't already in your context,
-    # but strictly we only need to change _flush_queue.
-
-    # ... [Include previous enqueue_and_process and check_time_limit code here if creating a fresh file] ...
-
     def _get_task_key(self, task_id: str) -> str:
-        """Helper to construct the redis key for a task"""
         return f"{settings.DATA_STORE_NAME}:{task_id}"
 
     async def enqueue_and_process(self, task_in: TaskCreate) -> TaskResponse:
-        # ... [Same code as previous step] ...
         task_id = str(uuid.uuid4())
         current_time = datetime.utcnow()
         timestamp_str = current_time.isoformat()
@@ -65,7 +55,6 @@ class QueueService:
             raise
 
     async def check_time_limit(self):
-        # ... [Same code as previous step] ...
         async with self.redis.pipeline() as pipe:
             pipe.llen(settings.QUEUE_NAME)
             pipe.get(self.timestamp_key)
@@ -78,7 +67,6 @@ class QueueService:
             await self._check_and_flush_logic(queue_len, start_time_bytes)
 
     async def _check_and_flush_logic(self, queue_len: int, start_time_bytes: Any):
-        # ... [Same logic code, but we will make it smarter about the lock] ...
         should_flush = False
         flush_reason = ""
         current_time = datetime.utcnow()
@@ -87,7 +75,6 @@ class QueueService:
             should_flush = True
             flush_reason = f"batch_size ({queue_len} >= {settings.BATCH_SIZE})"
         elif start_time_bytes:
-            # ... [Timeout logic same as before] ...
             try:
                 if isinstance(start_time_bytes, bytes):
                     start_time_str = start_time_bytes.decode('utf-8')
@@ -109,40 +96,22 @@ class QueueService:
             await self._flush_queue(queue_len)
 
     async def _flush_queue(self, count: int):
-        """
-        Flushes the queue with a distributed lock to ensure single-threaded model inference.
-        """
-        # 1. Try to acquire the lock (Set key if not exists, expire in 60s safety)
-        # We use a unique ID for the lock value so we only delete OUR lock
         lock_id = str(uuid.uuid4())
-        is_locked = await self.redis.set(
-            self.lock_key,
-            lock_id,
-            nx=True,
-            ex=60
-        )
+        is_locked = await self.redis.set(self.lock_key, lock_id, nx=True, ex=60)
 
         if not is_locked:
-            logger.info("🔒 Flush skipped - Another worker is processing the batch")
+            logger.info("🔒 Flush skipped - Another worker is processing")
             return
 
         try:
-            # 2. Re-check queue length inside the lock!
-            # It's possible someone drained it just before we got the lock
-            # or we are competing with another thread.
-
-            # Note: We stick to lpop logic. If lpop returns None, we just exit.
             logger.info(f"🚀 Flushing queue - Processing up to {count} items")
 
             task_ids = await self.redis.lpop(settings.QUEUE_NAME, count)
             if not task_ids:
-                logger.warning("⚠️ No items to flush (queue was empty)")
                 return
 
-            # Reset the timer
             await self.redis.delete(self.timestamp_key)
 
-            # 3. Retrieve Data
             task_keys = [self._get_task_key(tid) for tid in task_ids]
             raw_data_list = await self.redis.mget(task_keys)
 
@@ -153,23 +122,41 @@ class QueueService:
                     documents_map[item['id']] = item['text_content']
 
             if not documents_map:
-                logger.warning("⚠️ Tasks popped but data not found")
                 return
 
-            # 4. Inference (Protected by Lock)
             logger.info(f"🤖 Running BERT inference on {len(documents_map)} documents")
             start_time = datetime.utcnow()
 
-            processed_results = await run_in_threadpool(
+            # Note: get_batch_outputs now returns (cleaned_dict, stats_dict)
+            processed_results, pii_stats = await run_in_threadpool(
                 get_batch_outputs,
                 self.model,
                 documents_map
             )
 
-            processing_time = (datetime.utcnow() - start_time).total_seconds()
-            logger.success(f"✅ Batch processed in {processing_time:.2f}s")
+            processing_time_ms = (datetime.utcnow() - start_time).total_seconds() * 1000
 
-            # 5. Update Results
+            # --- UPDATE STATISTICS ---
+            try:
+                async with self.redis.pipeline() as pipe:
+                    # Update runtime stats
+                    pipe.hincrby(settings.STATS_KEY, "total_processed_docs", len(processed_results))
+                    pipe.hincrbyfloat(settings.STATS_KEY, "total_inference_time_ms", processing_time_ms)
+                    pipe.hset(settings.STATS_KEY, "last_inference_ms", f"{processing_time_ms:.2f}")
+
+                    # Update PII distribution stats (keys like 'pii_count:PER')
+                    for label, count in pii_stats.items():
+                        pipe.hincrby(settings.STATS_KEY, f"pii_count:{label}", count)
+                        pipe.hincrby(settings.STATS_KEY, "total_pii_entities", count)
+
+                    await pipe.execute()
+                    logger.debug(f"📊 Stats updated: {pii_stats}")
+            except Exception as e:
+                logger.error(f"⚠️ Failed to update statistics: {e}")
+            # -------------------------
+
+            logger.success(f"✅ Batch processed in {processing_time_ms:.2f}ms")
+
             updated_count = 0
             for task_id, processed_text in processed_results.items():
                 task_key = self._get_task_key(task_id)
@@ -180,11 +167,7 @@ class QueueService:
                     task_data['status'] = 'processed'
                     task_data['processed_at'] = datetime.utcnow().isoformat()
 
-                    await self.redis.set(
-                        task_key,
-                        json.dumps(task_data),
-                        ex=settings.DOCUMENT_TTL
-                    )
+                    await self.redis.set(task_key, json.dumps(task_data), ex=settings.DOCUMENT_TTL)
                     updated_count += 1
 
             logger.success(f"💾 Updated {updated_count}/{len(processed_results)} tasks")
@@ -194,8 +177,6 @@ class QueueService:
             raise
 
         finally:
-            # 6. Release Lock (Lua script to ensure we only delete OUR lock)
-            # Simple version: Check if value matches lock_id, then delete
             script = """
             if redis.call("get", KEYS[1]) == ARGV[1] then
                 return redis.call("del", KEYS[1])
@@ -204,9 +185,7 @@ class QueueService:
             end
             """
             await self.redis.eval(script, 1, self.lock_key, lock_id)
-            logger.debug("🔓 Lock released")
 
-    # ... [Previous get_item_by_id and get_all_queue_items helper methods] ...
     async def get_item_by_id(self, item_id: str) -> Optional[TaskResponse]:
         task_key = self._get_task_key(item_id)
         raw_data = await self.redis.get(task_key)

@@ -1,36 +1,31 @@
 """
 Model utilities powering the PII cleaner.
-
-The helpers in this module intentionally keep the business logic independent from
-training code so they can be reused both during experimentation (e.g. notebooks)
-and inside production services (e.g. FastAPI apps).
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, Dict, Iterable, List, Mapping, MutableMapping, Optional, Sequence
+from collections import Counter
+from typing import Any, Dict, List, Mapping, Optional, Sequence, Tuple
 
 import torch
 import torch.nn as nn
 from transformers import (
     AutoModelForTokenClassification,
     AutoTokenizer,
-    Pipeline,
     TokenClassificationPipeline,
     pipeline,
 )
 
 try:
     from vllm import LLM  # type: ignore
-except Exception:  # pragma: no cover - optional dependency
-    LLM = None  # type: ignore
+except Exception:
+    LLM = None
 
 
 @dataclass
 class EntitySpan:
     """Lightweight structure describing a detected entity span."""
-
     label: str
     start: int
     end: int
@@ -40,9 +35,6 @@ class EntitySpan:
 class HFPiiCleaner(nn.Module):
     """
     Wrapper around a Hugging Face token-classification model that masks PII spans.
-
-    The class exposes ``mask_text`` and ``process_document`` helpers which are
-    leveraged by :func:`get_batch_outputs`.
     """
 
     def __init__(
@@ -58,7 +50,7 @@ class HFPiiCleaner(nn.Module):
     ) -> None:
         import logging
         logger = logging.getLogger(__name__)
-        
+
         super().__init__()
         self.mask_token = mask_token
         self.confidence_threshold = confidence_threshold
@@ -91,10 +83,6 @@ class HFPiiCleaner(nn.Module):
         )
 
     def forward(self, texts: Sequence[str]) -> List[List[EntitySpan]]:
-        """
-        Run inference on multiple texts and return detected entity spans.
-        """
-
         outputs = self.pipeline(list(texts), batch_size=len(texts))
         if isinstance(outputs, dict):
             outputs = [outputs]
@@ -120,103 +108,86 @@ class HFPiiCleaner(nn.Module):
         return self.label_replacements.get(label, self.mask_token)
 
     def mask_text(self, text: str) -> str:
-        """
-        Replace each detected entity with the configured mask token.
-        """
+        """Original interface: returns just the cleaned string."""
+        cleaned, _ = self.mask_text_with_stats(text)
+        return cleaned
 
+    def mask_text_with_stats(self, text: str) -> Tuple[str, Dict[str, int]]:
+        """
+        Replace entities and return stats about what was found.
+        Returns: (masked_text, dict_of_counts)
+        """
         spans = self.forward([text])[0]
+        stats = Counter()
+
         if not spans:
-            return text
+            return text, dict(stats)
 
         masked_parts: List[str] = []
         cursor = 0
         for span in spans:
+            stats[span.label] += 1
             masked_parts.append(text[cursor : span.start])
             masked_parts.append(self._replacement_for(span.label))
             cursor = span.end
         masked_parts.append(text[cursor:])
-        return "".join(masked_parts)
+
+        return "".join(masked_parts), dict(stats)
 
     def process_document(self, document: str) -> str:
-        """
-        Alias method used by :func:`get_batch_outputs`.
-        """
-
         return self.mask_text(document)
 
 
-def _default_batch_handler(model: Any, document: str) -> str:
+def get_batch_outputs(
+    model: Any,
+    documents: Mapping[str, str]
+) -> Tuple[Dict[str, str], Dict[str, int]]:
     """
-    Gracefully fallback to different APIs depending on the model interface.
-    """
+    Process a batch and return both cleaned text and aggregated statistics.
 
-    if hasattr(model, "process_document"):
-        return model.process_document(document)
-
-    if hasattr(model, "mask_text"):
-        return model.mask_text(document)  # type: ignore[no-any-return]
-
-    if callable(model):
-        output = model(document)
-        if isinstance(output, str):
-            return output
-        raise TypeError(
-            "Callable model must return a string representing the masked document."
-        )
-
-    raise TypeError(
-        "Model does not expose a known interface. Provide an object with either "
-        "'process_document', 'mask_text' or make it callable."
+    Returns:
+    (
+        {doc_id: cleaned_text},
+        {label: total_count}
     )
-
-
-def get_batch_outputs(model: Any, documents: Mapping[str, str]) -> Dict[str, str]:
-    """
-    Process a batch of (document_name -> content) pairs.
-
-    Parameters
-    ----------
-    model:
-        Anything exposing ``process_document(str) -> str``, ``mask_text(str) -> str``
-        or a callable returning the masked string directly.
-    documents:
-        Mapping of document identifiers to raw text.
-
-    Returns
-    -------
-    dict
-        Key/value pairs matching the provided documents with their cleaned content.
     """
 
     if not isinstance(documents, Mapping):
         raise TypeError("documents must be a mapping of name -> text.")
 
     cleaned: Dict[str, str] = {}
-    for name, text in documents.items():
-        if not isinstance(text, str):
-            raise TypeError(f"Document '{name}' is not a string.")
-        cleaned[name] = _default_batch_handler(model, text)
-    return cleaned
+    aggregated_stats = Counter()
+
+    # Optimized path for HFPiiCleaner to get stats
+    if isinstance(model, HFPiiCleaner):
+        for name, text in documents.items():
+            clean_text, doc_stats = model.mask_text_with_stats(text)
+            cleaned[name] = clean_text
+            aggregated_stats.update(doc_stats)
+    else:
+        # Fallback for generic models (no stats collection)
+        for name, text in documents.items():
+            if hasattr(model, "process_document"):
+                cleaned[name] = model.process_document(text)
+            elif hasattr(model, "mask_text"):
+                cleaned[name] = model.mask_text(text)
+            elif callable(model):
+                cleaned[name] = model(text)
+            else:
+                 raise TypeError("Unknown model interface")
+
+    return cleaned, dict(aggregated_stats)
+
 
 def load_model(
     model_name: str = "dslim/bert-base-NER",
     confidence_threshold: float = 0.6,
     device: Optional[int] = None
 ) -> HFPiiCleaner:
-    """
-    Load and return a configured HFPiiCleaner model.
-    
-    Args:
-        model_name: HuggingFace model name/path
-        confidence_threshold: Minimum confidence for PII detection
-        device: GPU device (-1 for CPU, 0+ for GPU)
-    """
     import logging
     logger = logging.getLogger(__name__)
-    
+
     logger.info(f"Loading PII model: {model_name}")
-    logger.info(f"Confidence threshold: {confidence_threshold}")
-    
     try:
         model = HFPiiCleaner(
             model_name_or_path=model_name,

@@ -8,6 +8,7 @@ class Settings(BaseSettings):
     # Redis Keys
     QUEUE_NAME: str = "task_queue"
     DATA_STORE_NAME: str = "task_data"
+    STATS_KEY: str = "server_stats"  # New key for statistics
 
     # Logic Settings
     BATCH_SIZE: int = 5
@@ -21,8 +22,8 @@ class Settings(BaseSettings):
     MAX_TEXT_LENGTH: int = 10000
 
     # Rate Limiting
-    RATE_LIMIT_REQUESTS: int = 20  # Max requests per window
-    RATE_LIMIT_WINDOW: int = 60  # Window size in seconds
+    RATE_LIMIT_REQUESTS: int = 20
+    RATE_LIMIT_WINDOW: int = 60
 
     class Config:
         env_file = ".env"
