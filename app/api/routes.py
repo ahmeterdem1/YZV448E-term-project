@@ -7,6 +7,8 @@ from app.core.config import settings
 from app.schemas.task import TaskCreate, TaskResponse
 from app.services.queue import QueueService
 
+from datetime import datetime
+
 router = APIRouter()
 
 
@@ -141,4 +143,45 @@ async def peek_queue(redis: Redis = Depends(get_redis)):
 
     except Exception as e:
         logger.error(f"❌ Error checking queue: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/stats", status_code=200)
+async def get_server_stats(redis: Redis = Depends(get_redis)):
+    """
+    Retrieve real-time server statistics including:
+    - System metrics (CPU, RAM)
+    - PII detection counts (Data Drift monitoring)
+    - processing throughput and latency
+    """
+    try:
+        # Fetch all fields from the hash
+        stats = await redis.hgetall(settings.STATS_KEY)
+
+        if not stats:
+            return {
+                "status": "waiting_for_data",
+                "message": "No statistics collected yet."
+            }
+
+        # Convert numeric strings to proper types for JSON response
+        formatted_stats = {}
+        for k, v in stats.items():
+            # Try to convert to int/float if possible, otherwise keep string
+            try:
+                if "." in v:
+                    formatted_stats[k] = float(v)
+                else:
+                    formatted_stats[k] = int(v)
+            except ValueError:
+                formatted_stats[k] = v
+
+        return {
+            "status": "ok",
+            "timestamp": datetime.utcnow().isoformat(),
+            "metrics": formatted_stats
+        }
+
+    except Exception as e:
+        logger.error(f"❌ Error retrieving stats: {e}")
         raise HTTPException(status_code=500, detail=str(e))
