@@ -1,15 +1,23 @@
 from fastapi import APIRouter, Depends, HTTPException, Request, BackgroundTasks
-from typing import List
+from fastapi.responses import HTMLResponse
+from fastapi.templating import Jinja2Templates  # Import Jinja2Templates
+from typing import List, Dict, Any
 from redis.asyncio import Redis
 from loguru import logger
+from datetime import datetime
+import json
+from pathlib import Path
 
 from app.core.config import settings
 from app.schemas.task import TaskCreate, TaskResponse
 from app.services.queue import QueueService
 
-from datetime import datetime
-
 router = APIRouter()
+
+# Setup templates directory
+# Using Path logic to ensure it works regardless of where the app is run from
+BASE_DIR = Path(__file__).resolve().parent.parent
+templates = Jinja2Templates(directory=str(BASE_DIR / "templates"))
 
 
 async def get_redis() -> Redis:
@@ -21,36 +29,59 @@ async def get_redis() -> Redis:
 
 
 async def check_rate_limit(request: Request, redis: Redis = Depends(get_redis)):
-    """
-    Dependency to check rate limits per IP address.
-    Uses a fixed window counter in Redis.
-    """
-    client_ip = request.client.host
-    # Key format: ratelimit:<ip>
+    """Rate limiter dependency: Fixed window counter per IP."""
+    client_ip = request.client.host or "127.0.0.1"
     key = f"ratelimit:{client_ip}"
 
     try:
-        # Increment the counter
-        # redis.incr returns the new value
         current_count = await redis.incr(key)
-
-        # If this is the first request in the window, set the expiry
         if current_count == 1:
             await redis.expire(key, settings.RATE_LIMIT_WINDOW)
 
         if current_count > settings.RATE_LIMIT_REQUESTS:
-            logger.warning(f"⛔ Rate limit exceeded for {client_ip} ({current_count}/{settings.RATE_LIMIT_REQUESTS})")
+            logger.warning(f"⛔ Rate limit exceeded for {client_ip}")
             raise HTTPException(
-                status_code=429,  # Too Many Requests
-                detail=f"Rate limit exceeded. Maximum {settings.RATE_LIMIT_REQUESTS} requests per {settings.RATE_LIMIT_WINDOW} seconds."
+                status_code=429,
+                detail="Rate limit exceeded. Please slow down."
             )
-
     except HTTPException:
         raise
     except Exception as e:
-        # Fail open: If Redis fails for rate limiting, we log it but allow the request
-        # to ensure the API doesn't go down just because rate limiting logic failed.
         logger.error(f"⚠️ Rate limit check failed: {e}")
+
+
+@router.get("/stats", status_code=200)
+async def get_server_stats(redis: Redis = Depends(get_redis)):
+    """JSON endpoint for raw statistics."""
+    try:
+        stats = await redis.hgetall(settings.STATS_KEY)
+        if not stats:
+            return {"status": "waiting_for_data"}
+
+        formatted_stats = {}
+        for k, v in stats.items():
+            try:
+                formatted_stats[k] = float(v) if "." in v else int(v)
+            except ValueError:
+                formatted_stats[k] = v
+
+        return {
+            "status": "ok",
+            "timestamp": datetime.utcnow().isoformat(),
+            "metrics": formatted_stats
+        }
+    except Exception as e:
+        logger.error(f"❌ Error retrieving stats: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/dashboard", response_class=HTMLResponse)
+async def get_dashboard(request: Request):
+    """
+    Serves the dashboard template.
+    The actual data fetching is done by JS in the template hitting /stats.
+    """
+    return templates.TemplateResponse("dashboard.html", {"request": request})
 
 
 @router.post("/process-text", response_model=TaskResponse, status_code=201, dependencies=[Depends(check_rate_limit)])
@@ -60,128 +91,50 @@ async def upload_text(
         background_tasks: BackgroundTasks,
         redis: Redis = Depends(get_redis)
 ):
-    """
-    Uploads a text string.
-    Checks for text length and queue capacity limits before accepting.
-    Rate limited to prevent DOS.
-    """
-    # 1. Validation: Check Text Length
     if len(task.text_content) > settings.MAX_TEXT_LENGTH:
-        logger.warning(f"❌ Request rejected: Text too long ({len(task.text_content)} chars)")
-        raise HTTPException(
-            status_code=413,  # Payload Too Large
-            detail=f"Text content exceeds maximum allowed length of {settings.MAX_TEXT_LENGTH} characters."
-        )
+        raise HTTPException(status_code=413, detail="Text too long")
 
-    # 2. Validation: Check Queue Capacity
     current_queue_size = await redis.llen(settings.QUEUE_NAME)
     if current_queue_size >= settings.MAX_QUEUE_SIZE:
-        logger.warning(f"❌ Request rejected: Queue full ({current_queue_size}/{settings.MAX_QUEUE_SIZE})")
-        raise HTTPException(
-            status_code=503,  # Service Unavailable
-            detail="System is under heavy load. Please try again later."
-        )
+        raise HTTPException(status_code=503, detail="Queue full")
 
-    logger.info(f"📝 New text processing request - Length: {len(task.text_content)} chars")
+    logger.info(f"📝 New request - Length: {len(task.text_content)}")
 
     try:
         from app.main import ml_models
         model = ml_models.get("bert")
-
         if not model:
-            logger.error("❌ BERT model not loaded")
-            raise HTTPException(status_code=503, detail="Model not available")
+            raise HTTPException(status_code=503, detail="Model not loaded")
 
         service = QueueService(redis, model)
         result = await service.enqueue_and_process(task)
-
-        logger.success(f"✅ Task created successfully - ID: {result.id}")
         return result
 
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"❌ Error processing text: {e}")
+        logger.error(f"❌ Processing error: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 
 @router.get("/text/{item_id}", response_model=TaskResponse)
-async def get_text_by_id(
-        item_id: str,
-        redis: Redis = Depends(get_redis)
-):
-    logger.info(f"🔍 Retrieving task: {item_id}")
-
+async def get_text_by_id(item_id: str, redis: Redis = Depends(get_redis)):
     try:
         service = QueueService(redis)
         item = await service.get_item_by_id(item_id)
-
         if not item:
-            logger.warning(f"⚠️ Task not found: {item_id}")
             raise HTTPException(status_code=404, detail="Item not found")
-
-        logger.success(f"✅ Task retrieved: {item_id} - Status: {item.status}")
         return item
-
-    except HTTPException:
-        raise
     except Exception as e:
-        logger.error(f"❌ Error retrieving task {item_id}: {e}")
+        logger.error(f"❌ Retrieval error: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 
 @router.get("/queue", response_model=List[TaskResponse])
 async def peek_queue(redis: Redis = Depends(get_redis)):
-    logger.info("🔍 Checking queue status")
-
     try:
         service = QueueService(redis)
-        items = await service.get_all_queue_items()
-
-        logger.info(f"📋 Queue status - Items: {len(items)}")
-        return items
-
+        return await service.get_all_queue_items()
     except Exception as e:
-        logger.error(f"❌ Error checking queue: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-@router.get("/stats", status_code=200)
-async def get_server_stats(redis: Redis = Depends(get_redis)):
-    """
-    Retrieve real-time server statistics including:
-    - System metrics (CPU, RAM)
-    - PII detection counts (Data Drift monitoring)
-    - processing throughput and latency
-    """
-    try:
-        # Fetch all fields from the hash
-        stats = await redis.hgetall(settings.STATS_KEY)
-
-        if not stats:
-            return {
-                "status": "waiting_for_data",
-                "message": "No statistics collected yet."
-            }
-
-        # Convert numeric strings to proper types for JSON response
-        formatted_stats = {}
-        for k, v in stats.items():
-            # Try to convert to int/float if possible, otherwise keep string
-            try:
-                if "." in v:
-                    formatted_stats[k] = float(v)
-                else:
-                    formatted_stats[k] = int(v)
-            except ValueError:
-                formatted_stats[k] = v
-
-        return {
-            "status": "ok",
-            "timestamp": datetime.utcnow().isoformat(),
-            "metrics": formatted_stats
-        }
-
-    except Exception as e:
-        logger.error(f"❌ Error retrieving stats: {e}")
+        logger.error(f"❌ Queue error: {e}")
         raise HTTPException(status_code=500, detail=str(e))
