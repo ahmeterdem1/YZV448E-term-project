@@ -6,12 +6,15 @@ class Settings(BaseSettings):
     REDIS_URL: str = "redis://host.docker.internal:6379/0"
 
     # Redis Keys
-    QUEUE_NAME: str = "task_queue"  # The List (for ordering)
-    DATA_STORE_NAME: str = "task_data"  # The Hash (for storage)
+    QUEUE_NAME: str = "task_queue"
+    DATA_STORE_NAME: str = "task_data"  # Now used as a key prefix (e.g., task_data:uuid)
 
     # Logic Settings
-    BATCH_SIZE: int = 5  # Flush triggers when queue hits this size
-    BATCH_TIMEOUT: int = 30  # Seconds before timeout flush
+    BATCH_SIZE: int = 5
+    BATCH_TIMEOUT: int = 30
+
+    # New Config: TTL in seconds (default 1 day)
+    DOCUMENT_TTL: int = 86400
 
     class Config:
         env_file = ".env"
