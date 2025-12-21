@@ -76,10 +76,10 @@ async def lifespan(app: FastAPI):
     # 1. Load Model
     logger.info("Loading ML models...")
     try:
-        ml_models["bert"] = load_model()
-        logger.success("✅ BERT model loaded successfully")
+        ml_models["bert"] = load_model(use_hybrid=True)  # Hybrid mode
+        logger.success("✅ Hybrid PII Cleaner (BERT + Regex) loaded successfully")
     except Exception as e:
-        logger.error(f"❌ Failed to load BERT model: {e}")
+        logger.error(f"❌ Failed to load PII cleaner: {e}")
         raise
 
     # 2. Start Background Tasks
