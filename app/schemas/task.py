@@ -1,5 +1,5 @@
 from pydantic import BaseModel
-from typing import Optional
+from typing import Optional, Dict
 from datetime import datetime
 
 class TaskCreate(BaseModel):
@@ -10,3 +10,5 @@ class TaskResponse(BaseModel):
     status: str
     created_at: str
     text_content: str
+    cleaned_text: Optional[str] = None
+    pii_entities: Optional[Dict[str, int]] = None
