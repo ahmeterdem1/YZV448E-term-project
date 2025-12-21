@@ -1,0 +1,460 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>PII Cleaner - Text Processor</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: 'Segoe UI', sans-serif;
+            background: linear-gradient(135deg, #1a1a1a 0%, #2d2d2d 100%);
+            color: #e0e0e0;
+            min-height: 100vh;
+            padding: 20px;
+        }
+        .container { max-width: 1200px; margin: 0 auto; }
+        header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 30px;
+            padding-bottom: 20px;
+            border-bottom: 2px solid #404040;
+        }
+        h1 { font-size: 2em; color: #fff; }
+        .nav-links {
+            display: flex;
+            gap: 15px;
+        }
+        .nav-links a {
+            color: #4db8ff;
+            text-decoration: none;
+            padding: 8px 15px;
+            border-radius: 4px;
+            transition: all 0.3s;
+        }
+        .nav-links a:hover {
+            background-color: #404040;
+            color: #fff;
+        }
+        .content {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 30px;
+        }
+        .panel {
+            background-color: #2d2d2d;
+            border-radius: 8px;
+            padding: 20px;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.3);
+        }
+        .panel h2 {
+            color: #aaa;
+            font-size: 1.1em;
+            margin-bottom: 15px;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+        }
+
+        /* Upload Area */
+        .upload-area {
+            border: 2px dashed #404040;
+            border-radius: 8px;
+            padding: 40px;
+            text-align: center;
+            cursor: pointer;
+            transition: all 0.3s;
+            background-color: #1f1f1f;
+        }
+        .upload-area:hover {
+            border-color: #4db8ff;
+            background-color: #252525;
+        }
+        .upload-area.dragover {
+            border-color: #28a745;
+            background-color: #1e3a1e;
+        }
+        .upload-icon { font-size: 3em; margin-bottom: 10px; }
+        .upload-text { color: #999; font-size: 0.95em; }
+        .upload-text strong { color: #4db8ff; }
+        #fileInput { display: none; }
+
+        /* Text Input Area */
+        textarea {
+            width: 100%;
+            min-height: 300px;
+            background-color: #1f1f1f;
+            color: #e0e0e0;
+            border: 1px solid #404040;
+            border-radius: 6px;
+            padding: 12px;
+            font-family: 'Courier New', monospace;
+            font-size: 0.95em;
+            resize: vertical;
+        }
+        textarea:focus {
+            outline: none;
+            border-color: #4db8ff;
+            box-shadow: 0 0 10px rgba(77, 184, 255, 0.2);
+        }
+
+        /* Button Styles */
+        .button-group {
+            display: flex;
+            gap: 10px;
+            margin-top: 15px;
+        }
+        button {
+            flex: 1;
+            padding: 12px;
+            border: none;
+            border-radius: 6px;
+            font-size: 1em;
+            cursor: pointer;
+            transition: all 0.3s;
+            font-weight: 600;
+        }
+        .btn-primary {
+            background-color: #28a745;
+            color: white;
+        }
+        .btn-primary:hover { background-color: #218838; }
+        .btn-primary:disabled {
+            background-color: #6c757d;
+            cursor: not-allowed;
+        }
+        .btn-secondary {
+            background-color: #404040;
+            color: #e0e0e0;
+        }
+        .btn-secondary:hover { background-color: #505050; }
+
+        /* Output Section */
+        .output-section {
+            margin-top: 20px;
+        }
+        .output-container {
+            background-color: #1f1f1f;
+            border: 1px solid #404040;
+            border-radius: 6px;
+            padding: 15px;
+            min-height: 300px;
+            max-height: 500px;
+            overflow-y: auto;
+        }
+        .output-empty {
+            color: #666;
+            text-align: center;
+            padding: 40px 20px;
+        }
+        .output-text {
+            color: #e0e0e0;
+            font-family: 'Courier New', monospace;
+            line-height: 1.6;
+            word-wrap: break-word;
+            white-space: pre-wrap;
+        }
+
+        /* Status & Stats */
+        .status-box {
+            background-color: #1f1f1f;
+            border-left: 4px solid #4db8ff;
+            padding: 12px;
+            margin-top: 15px;
+            border-radius: 4px;
+            font-size: 0.9em;
+        }
+        .status-box.success { border-left-color: #28a745; }
+        .status-box.error { border-left-color: #dc3545; }
+        .status-box.loading { border-left-color: #ffc107; }
+
+        .stats {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 10px;
+            margin-top: 15px;
+        }
+        .stat {
+            background-color: #1f1f1f;
+            padding: 10px;
+            border-radius: 4px;
+            border: 1px solid #404040;
+            text-align: center;
+        }
+        .stat-label { font-size: 0.8em; color: #999; }
+        .stat-value { font-size: 1.5em; font-weight: bold; color: #4db8ff; }
+
+        /* Loading spinner */
+        .spinner {
+            border: 3px solid #404040;
+            border-top: 3px solid #4db8ff;
+            border-radius: 50%;
+            width: 30px;
+            height: 30px;
+            animation: spin 1s linear infinite;
+            margin: 0 auto;
+        }
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+
+        /* Responsive */
+        @media (max-width: 768px) {
+            .content { grid-template-columns: 1fr; }
+            header { flex-direction: column; gap: 15px; }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>🛡️ PII Cleaner</h1>
+            <div class="nav-links">
+                <a href="/api/v1/dashboard">Dashboard</a>
+                <a href="/api/v1/processor">Processor</a>
+            </div>
+        </header>
+
+        <div class="content">
+            <!-- Left Panel: Input -->
+            <div class="panel">
+                <h2>Input</h2>
+                
+                <!-- Upload Area -->
+                <div class="upload-area" id="uploadArea">
+                    <div class="upload-icon">📁</div>
+                    <p class="upload-text">
+                        Drag & drop your text file here or <strong>click to browse</strong>
+                    </p>
+                    <p style="font-size: 0.85em; color: #666; margin-top: 5px;">Supported: .txt, .csv, .json</p>
+                </div>
+                <input type="file" id="fileInput" accept=".txt,.csv,.json,.log" />
+
+                <div style="margin: 20px 0; border-top: 1px solid #404040; border-bottom: 1px solid #404040; padding: 15px 0; text-align: center; color: #999;">
+                    OR
+                </div>
+
+                <!-- Text Input -->
+                <textarea id="textInput" placeholder="Or paste/type your text here..."></textarea>
+
+                <div class="button-group">
+                    <button class="btn-primary" id="processBtn" onclick="processText()">Process Text</button>
+                    <button class="btn-secondary" onclick="clearAll()">Clear</button>
+                </div>
+
+                <div id="inputStatus"></div>
+            </div>
+
+            <!-- Right Panel: Output -->
+            <div class="panel">
+                <h2>Output</h2>
+
+                <div class="output-section">
+                    <div class="output-container" id="outputContainer">
+                        <div class="output-empty">No output yet. Process some text first!</div>
+                    </div>
+                </div>
+
+                <button class="btn-secondary" style="width: 100%; margin-top: 15px;" onclick="downloadOutput()">
+                    📥 Download Output
+                </button>
+
+                <div id="outputStats" class="stats"></div>
+                <div id="outputStatus"></div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        let currentResult = null;
+
+        // File Upload Handling
+        const uploadArea = document.getElementById('uploadArea');
+        const fileInput = document.getElementById('fileInput');
+
+        uploadArea.addEventListener('click', () => fileInput.click());
+
+        uploadArea.addEventListener('dragover', (e) => {
+            e.preventDefault();
+            uploadArea.classList.add('dragover');
+        });
+
+        uploadArea.addEventListener('dragleave', () => {
+            uploadArea.classList.remove('dragover');
+        });
+
+        uploadArea.addEventListener('drop', (e) => {
+            e.preventDefault();
+            uploadArea.classList.remove('dragover');
+            const files = e.dataTransfer.files;
+            if (files.length > 0) {
+                handleFileUpload(files[0]);
+            }
+        });
+
+        fileInput.addEventListener('change', (e) => {
+            if (e.target.files.length > 0) {
+                handleFileUpload(e.target.files[0]);
+            }
+        });
+
+        function handleFileUpload(file) {
+            if (file.size > 1000000) { // 1MB limit
+                showStatus('Error: File too large (max 1MB)', 'error', 'input');
+                return;
+            }
+
+            const reader = new FileReader();
+            reader.onload = (e) => {
+                document.getElementById('textInput').value = e.target.result;
+                showStatus(`✓ File loaded: ${file.name}`, 'success', 'input');
+            };
+            reader.onerror = () => {
+                showStatus('Error reading file', 'error', 'input');
+            };
+            reader.readAsText(file);
+        }
+
+        // Process Text
+        async function processText() {
+            const text = document.getElementById('textInput').value.trim();
+            if (!text) {
+                showStatus('Please enter or upload text first', 'error', 'input');
+                return;
+            }
+
+            const btn = document.getElementById('processBtn');
+            btn.disabled = true;
+            btn.innerHTML = '<div class="spinner"></div>';
+
+            showStatus('Processing...', 'loading', 'output');
+
+            try {
+                const response = await fetch('/api/v1/process-text', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ text_content: text })
+                });
+
+                if (!response.ok) {
+                    const error = await response.json();
+                    throw new Error(error.detail || 'Processing failed');
+                }
+
+                const result = await response.json();
+                const taskId = result.id;
+                
+                console.log('Task queued:', taskId);
+
+                // Poll for results (max 30 seconds)
+                let completed = false;
+                let attempts = 0;
+                const maxAttempts = 60; // 60 * 500ms = 30 seconds
+
+                while (!completed && attempts < maxAttempts) {
+                    await new Promise(r => setTimeout(r, 500));
+                    
+                    try {
+                        const resultResponse = await fetch(`/api/v1/text/${taskId}`);
+                        
+                        if (resultResponse.ok) {
+                            const processedResult = await resultResponse.json();
+                            
+                            // Check if processing is complete
+                            if (processedResult.status === 'completed' && processedResult.cleaned_text) {
+                                currentResult = processedResult;
+                                displayOutput(processedResult);
+                                showStatus('✓ Processing complete!', 'success', 'output');
+                                completed = true;
+                                break;
+                            }
+                        }
+                    } catch (e) {
+                        console.error('Poll error:', e);
+                    }
+                    
+                    attempts++;
+                }
+
+                if (!completed) {
+                    showStatus('⚠ Processing timeout - took longer than expected', 'error', 'output');
+                }
+
+            } catch (error) {
+                console.error('Error:', error);
+                showStatus(`Error: ${error.message}`, 'error', 'output');
+            } finally {
+                btn.disabled = false;
+                btn.innerHTML = 'Process Text';
+            }
+        }
+
+        function displayOutput(result) {
+            const container = document.getElementById('outputContainer');
+            let cleanedText = result.text_content || 'No output';
+            
+            // If there's a cleaned version, show it
+            if (result.cleaned_text) {
+                cleanedText = result.cleaned_text;
+            }
+
+            container.innerHTML = `<div class="output-text">${escapeHtml(cleanedText)}</div>`;
+
+            // Show stats if available
+            const statsDiv = document.getElementById('outputStats');
+            if (result.pii_entities && Object.keys(result.pii_entities).length > 0) {
+                let statsHtml = '';
+                for (const [label, count] of Object.entries(result.pii_entities)) {
+                    statsHtml += `
+                        <div class="stat">
+                            <div class="stat-label">${label}</div>
+                            <div class="stat-value">${count}</div>
+                        </div>
+                    `;
+                }
+                statsDiv.innerHTML = statsHtml;
+            }
+        }
+
+        function clearAll() {
+            document.getElementById('textInput').value = '';
+            document.getElementById('outputContainer').innerHTML = '<div class="output-empty">No output yet. Process some text first!</div>';
+            document.getElementById('outputStats').innerHTML = '';
+            document.getElementById('inputStatus').innerHTML = '';
+            document.getElementById('outputStatus').innerHTML = '';
+            fileInput.value = '';
+            currentResult = null;
+        }
+
+        function downloadOutput() {
+            if (!currentResult) {
+                showStatus('Nothing to download', 'error', 'output');
+                return;
+            }
+
+            const text = currentResult.cleaned_text || currentResult.text_content;
+            const element = document.createElement('a');
+            element.setAttribute('href', 'data:text/plain;charset=utf-8,' + encodeURIComponent(text));
+            element.setAttribute('download', `cleaned_${Date.now()}.txt`);
+            element.style.display = 'none';
+            document.body.appendChild(element);
+            element.click();
+            document.body.removeChild(element);
+            showStatus('✓ Downloaded!', 'success', 'output');
+        }
+
+        function showStatus(msg, type, target) {
+            const statusDiv = document.getElementById(target + 'Status');
+            statusDiv.innerHTML = `<div class="status-box ${type}">${msg}</div>`;
+        }
+
+        function escapeHtml(text) {
+            const div = document.createElement('div');
+            div.textContent = text;
+            return div.innerHTML;
+        }
+    </script>
+</body>
+</html>

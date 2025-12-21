@@ -26,7 +26,10 @@
     <div class="container">
         <div class="header">
             <h1>🛡️ PII Cleaner Monitor</h1>
-            <span class="status-badge" id="connStatus">Connected</span>
+            <div style="display: flex; gap: 20px; align-items: center;">
+                <a href="/api/v1/processor" style="color: #4db8ff; text-decoration: none; padding: 8px 15px; border-radius: 4px; transition: all 0.3s;" onmouseover="this.style.backgroundColor='#404040'" onmouseout="this.style.backgroundColor='transparent'">📝 Processor</a>
+                <span class="status-badge" id="connStatus">Connected</span>
+            </div>
         </div>
 
         <div class="row-stats">
