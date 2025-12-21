@@ -15,7 +15,8 @@ services:
     depends_on:
       - redis
     volumes:
-      - ./logs:/app/logs          
+      - ./logs:/app/logs
+      - .:/app          
     environment:
       - REDIS_URL=redis://redis:6379/0
 
