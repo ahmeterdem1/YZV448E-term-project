@@ -163,9 +163,17 @@ class QueueService:
                 raw_data = await self.redis.get(task_key)
                 if raw_data:
                     task_data = json.loads(raw_data)
+                    task_data['cleaned_text'] = processed_text
                     task_data['text_content'] = processed_text
-                    task_data['status'] = 'processed'
+                    task_data['status'] = 'completed'
                     task_data['processed_at'] = datetime.utcnow().isoformat()
+                    
+                    # Count PII entities
+                    pii_entity_counts = {}
+                    for label in pii_stats.keys():
+                        pii_entity_counts[label] = pii_stats.get(label, 0)
+                    
+                    task_data['pii_entities'] = pii_entity_counts
 
                     await self.redis.set(task_key, json.dumps(task_data), ex=settings.DOCUMENT_TTL)
                     updated_count += 1
