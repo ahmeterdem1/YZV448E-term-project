@@ -84,6 +84,14 @@ async def get_dashboard(request: Request):
     return templates.TemplateResponse("dashboard.html", {"request": request})
 
 
+@router.get("/processor", response_class=HTMLResponse)
+async def get_processor(request: Request):
+    """
+    Serves the text processor UI with file upload and drag-drop support.
+    """
+    return templates.TemplateResponse("processor.html", {"request": request})
+
+
 @router.post("/process-text", response_model=TaskResponse, status_code=201, dependencies=[Depends(check_rate_limit)])
 async def upload_text(
         request: Request,
