@@ -28,7 +28,7 @@ To run the project in a CUDA supported environment, simply run the below command
 
 ```bash
 
-docker-compose -f docker-compose.yml -f docker-compose.gpu.yml up --build
+docker-compose -f docker-compose.yml -f docker-compose.gpu.yml up --build -d
 
 ```
 
