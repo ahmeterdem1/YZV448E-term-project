@@ -14,13 +14,33 @@ from transformers import (
     AutoModelForTokenClassification,
     TrainingArguments,
     Trainer,
-    DataCollatorForTokenClassification
+    DataCollatorForTokenClassification,
+    TrainerCallback
 )
 
 from app.core.config import settings
 from app.utils.model import compute_f5_score
+from loguru import logger as app_logger  # distinct import
 
+# Configure local logger for this module
 logger = logging.getLogger(__name__)
+
+
+class LoguruCallback(TrainerCallback):
+    """
+    A custom callback that logs Trainer metrics to Loguru.
+    This ensures training progress is visible in the main app logs.
+    """
+
+    def on_log(self, args, state, control, logs=None, **kwargs):
+        if logs:
+            # Filter out internal keys to keep logs clean
+            clean_logs = {k: v for k, v in logs.items() if k not in ["epoch", "step"]}
+            epoch = logs.get("epoch", 0.0)
+            step = state.global_step
+
+            # Log with Loguru
+            app_logger.info(f"🏋️ Training Status (Epoch {epoch:.2f} | Step {step}): {clean_logs}")
 
 
 class TrainingService:
@@ -45,7 +65,7 @@ class TrainingService:
         Fine-tunes the model on the training dataset and saves it to the registry.
         Returns the path to the new model.
         """
-        logger.info("🚀 Starting model training...")
+        app_logger.info("🚀 Starting model training...")
 
         # Load Datasets
         try:
@@ -55,7 +75,7 @@ class TrainingService:
             if os.path.exists(settings.TEST_DATASET_PATH):
                 eval_dataset = self.load_dataset_from_json(settings.TEST_DATASET_PATH)
         except Exception as e:
-            logger.error(f"❌ Failed to load datasets: {e}")
+            app_logger.error(f"❌ Failed to load datasets: {e}")
             raise
 
         # Load Tokenizer & Model
@@ -93,14 +113,17 @@ class TrainingService:
 
         training_args = TrainingArguments(
             output_dir=output_dir,
-            evaluation_strategy="epoch" if eval_dataset else "no",
+            evaluation_strategy="steps" if eval_dataset else "no",
+            eval_steps=50,  # Evaluate every 50 steps
+            logging_steps=10,  # Log status every 10 steps (Regular Updates)
             learning_rate=2e-5,
             per_device_train_batch_size=8,
             per_device_eval_batch_size=8,
             num_train_epochs=3,
             weight_decay=0.01,
             save_strategy="no",  # Save manually at the end
-            use_cpu=not torch.cuda.is_available()
+            use_cpu=not torch.cuda.is_available(),
+            disable_tqdm=False  # Keep progress bars for console
         )
 
         data_collator = DataCollatorForTokenClassification(tokenizer=tokenizer)
@@ -113,12 +136,13 @@ class TrainingService:
             eval_dataset=tokenized_eval,
             tokenizer=tokenizer,
             data_collator=data_collator,
+            callbacks=[LoguruCallback]  # Add custom logging callback
         )
 
         trainer.train()
 
         # Save Model
-        logger.info(f"💾 Saving new model to {output_dir}")
+        app_logger.info(f"💾 Saving new model to {output_dir}")
         trainer.save_model(output_dir)
         tokenizer.save_pretrained(output_dir)
 
@@ -129,31 +153,14 @@ class TrainingService:
         Evaluates the loaded pipeline against a test dataset and returns F5 score.
         """
         if not os.path.exists(dataset_path):
-            logger.warning(f"⚠️ Test dataset not found at {dataset_path}")
+            app_logger.warning(f"⚠️ Test dataset not found at {dataset_path}")
             return {}
 
-        logger.info(f"🧪 Evaluating model on {dataset_path}")
+        app_logger.info(f"🧪 Evaluating model on {dataset_path}")
         dataset = self.load_dataset_from_json(dataset_path)
-
-        # We need to map the pipeline's string output back to IDs or
-        # map the dataset's IDs to strings.
-        # For simplicity, we assume the dataset has 'ner_tags' as IDs
-        # and we use the model's config to map them.
 
         id2label = model_pipeline.model.config.id2label
         label_list = list(id2label.values())
-
-        predictions = []
-        true_labels = []
-
-        # Run inference
-        # Note: This is a simplified evaluation.
-        # In a real scenario, we need to handle tokenization alignment meticulously.
-        # Here we approximate by using the pipeline's output and matching text.
-
-        # Easier approach for metric calculation: Use the raw model + tokenizer
-        # and the compute_metrics logic, but we passed a pipeline wrapper.
-        # We will access the underlying model/tokenizer from the wrapper.
 
         tokenizer = model_pipeline.tokenizer
         model = model_pipeline.model
@@ -186,7 +193,9 @@ class TrainingService:
         training_args = TrainingArguments(
             output_dir="/tmp/eval",
             per_device_eval_batch_size=8,
-            use_cpu=not torch.cuda.is_available()
+            use_cpu=not torch.cuda.is_available(),
+            logging_steps=5,  # Log frequency during eval
+            disable_tqdm=False
         )
 
         trainer = Trainer(
@@ -194,14 +203,16 @@ class TrainingService:
             args=training_args,
             data_collator=data_collator,
             tokenizer=tokenizer,
+            callbacks=[LoguruCallback]  # Ensure eval progress is logged
         )
 
+        app_logger.info(f"⏳ Running inference on {len(dataset)} samples...")
         predictions_output = trainer.predict(tokenized_data)
         preds = np.argmax(predictions_output.predictions, axis=2)
         labels = predictions_output.label_ids
 
         # Calculate F5
         metrics = compute_f5_score(preds, labels, label_list, beta=5.0)
-        logger.info(f"📊 Evaluation Results: {metrics}")
+        app_logger.info(f"📊 Evaluation Results: {metrics}")
 
         return metrics
