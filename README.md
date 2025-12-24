@@ -2,11 +2,14 @@
 
 This repo holds our YZV448E term project: building a **GDPR-friendly text cleaner** that can detect personally identifiable information (PII) in large batches of student essays and anonymize them before downstream use.
 
+Before running the project, download the kaggle dataset and put it in a folder named data,
+next to "app".
+
 To run the project, simply build the docker compose setup:
 
 ```bash
 
-docker-compose up --build
+docker-compose build --no-cache
 
 ```
 
