@@ -7,8 +7,9 @@ services:
       - "6379:6379"
     volumes:
       - redis_data:/data
+
   fastapi:
-    build: . # Build using the Dockerfile in the current directory
+    build: .
     container_name: fastapi_server
     ports:
       - "8000:8000"
@@ -16,9 +17,11 @@ services:
       - redis
     volumes:
       - ./logs:/app/logs
-      - .:/app          
+      - .:/app
     environment:
       - REDIS_URL=redis://redis:6379/0
+      # Default: Tell PyTorch not to look for NVIDIA drivers
+      - NVIDIA_VISIBLE_DEVICES=void
 
 volumes:
   redis_data:

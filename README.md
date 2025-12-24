@@ -24,6 +24,14 @@ docker compose up -d
 
 ```
 
+To run the project in a CUDA supported environment, simply run the below command:
+
+```bash
+
+docker-compose -f docker-compose.yml -f docker-compose.gpu.yml up --build
+
+```
+
 The startup of the FastAPI server may take a few minutes as it loads the ML models. You can check the logs
 in the mean time via:
 
