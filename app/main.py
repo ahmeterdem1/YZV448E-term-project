@@ -5,12 +5,12 @@ from contextlib import asynccontextmanager
 from redis.asyncio import Redis
 from loguru import logger
 
-from app.api.routes import router, run_training_job
+from app.api.routes import router
 from app.core.config import settings
 from app.core.logging import setup_logging
 from app.utils.model import load_model
 from app.services.queue import QueueService
-from app.services.training import TrainingService
+from app.services.training import TrainingService  # <--- Import this
 
 setup_logging()
 
@@ -18,7 +18,7 @@ ml_models = {}
 
 
 async def process_queue_periodically():
-    # ... [Same as original] ...
+    """Checks queue for timeouts."""
     logger.info("Starting background queue processor")
     redis_client = Redis.from_url(settings.REDIS_URL, decode_responses=True)
     while True:
@@ -37,7 +37,7 @@ async def process_queue_periodically():
 
 
 async def collect_system_stats():
-    # ... [Same as original] ...
+    """Collects CPU and RAM usage periodically."""
     logger.info("Starting system monitoring task")
     redis_client = Redis.from_url(settings.REDIS_URL, decode_responses=True)
     await redis_client.hsetnx(settings.STATS_KEY, "startup_time", str(asyncio.get_running_loop().time()))
@@ -61,39 +61,34 @@ async def collect_system_stats():
     logger.info("System monitoring stopped")
 
 
+# --- NEW FUNCTION ---
 async def monitor_model_performance():
-    """Periodically evaluate F5 score and trigger training if low."""
+    """Periodically evaluate F5 score on the test set."""
     logger.info("Starting F5 score monitor")
     redis_client = Redis.from_url(settings.REDIS_URL, decode_responses=True)
     trainer = TrainingService()
 
-    CHECK_INTERVAL = settings.CHECK_INTERVAL_SECONDS
+    # Check every 60 seconds (set low for debugging, increase for production)
+    CHECK_INTERVAL = 60
 
     while True:
         try:
+            # Wait first so we don't block startup
             await asyncio.sleep(CHECK_INTERVAL)
 
             if "bert" in ml_models:
-                # Need access to the underlying HFPiiCleaner
+                # Access the underlying HuggingFace model
                 model_wrapper = ml_models["bert"]
+                # Handle Hybrid wrapper
                 hf_cleaner = model_wrapper.bert_model if hasattr(model_wrapper, 'bert_model') else model_wrapper
 
-                # Evaluate
+                # Run evaluation (in thread to avoid blocking loop)
                 metrics = await asyncio.to_thread(trainer.evaluate_model, hf_cleaner, settings.TEST_DATASET_PATH)
 
                 if metrics:
                     f5_score = metrics.get("f5", 0.0)
-                    logger.info(f"📉 Current F5 Score: {f5_score:.4f}")
-
-                    # Store in Redis for Dashboard
+                    # Save to Redis so Dashboard can see it
                     await redis_client.hset(settings.STATS_KEY, "model_f5_score", f"{f5_score:.4f}")
-
-                    # Auto-Train Logic
-                    if settings.AUTO_TRAIN_ON_PERFORMANCE_DROP and f5_score < settings.MIN_F5_SCORE:
-                        logger.warning(
-                            f"⚠️ F5 Score {f5_score:.4f} below threshold {settings.MIN_F5_SCORE}. Triggering training.")
-                        # Check if training is already running? (Simplification: just trigger)
-                        await run_training_job()
 
         except asyncio.CancelledError:
             break
@@ -102,7 +97,10 @@ async def monitor_model_performance():
             await asyncio.sleep(60)
 
     await redis_client.close()
+    logger.info("Model monitor stopped")
 
+
+# --------------------
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -110,16 +108,18 @@ async def lifespan(app: FastAPI):
 
     logger.info("Loading ML models...")
     try:
-        # load_model now checks registry
         ml_models["bert"] = load_model(use_hybrid=True)
         logger.success("✅ Hybrid PII Cleaner (BERT + Regex) loaded successfully")
     except Exception as e:
         logger.error(f"❌ Failed to load PII cleaner: {e}")
-        # Don't crash, let it retry or run without model for now
 
+    logger.info("Starting background tasks...")
     queue_task = asyncio.create_task(process_queue_periodically())
     monitor_task = asyncio.create_task(collect_system_stats())
+
+    # --- ADD THIS LINE ---
     f5_task = asyncio.create_task(monitor_model_performance())
+    # ---------------------
 
     logger.success("✅ Background tasks started")
 
@@ -128,13 +128,14 @@ async def lifespan(app: FastAPI):
     logger.info("🛑 Shutting down application...")
     queue_task.cancel()
     monitor_task.cancel()
-    f5_task.cancel()
+    f5_task.cancel()  # Cancel on shutdown
     try:
         await queue_task
         await monitor_task
         await f5_task
     except asyncio.CancelledError:
         pass
+
     ml_models.clear()
     logger.info("✅ Application shutdown complete")
 
@@ -147,10 +148,7 @@ app.include_router(router, prefix="/api/v1")
 def health_check():
     model_loaded = "bert" in ml_models
     logger.info(f"Health check - Model loaded: {model_loaded}")
-    return {
-        "status": "ok",
-        "model_loaded": model_loaded
-    }
+    return {"status": "ok", "model_loaded": model_loaded}
 
 
 if __name__ == "__main__":
