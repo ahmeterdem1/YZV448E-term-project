@@ -32,6 +32,9 @@ docker-compose -f docker-compose.yml -f docker-compose.gpu.yml up --build -d
 
 ```
 
+Note that, this command may take over 15 minutes to complete. It needs to install 
+CUDA compatible Torch to the docker environment, which takes time.
+
 The startup of the FastAPI server may take a few minutes as it loads the ML models. You can check the logs
 in the mean time via:
 

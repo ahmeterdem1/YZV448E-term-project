@@ -7,7 +7,7 @@
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     <style>
         body { font-family: 'Segoe UI', sans-serif; background-color: #1a1a1a; color: #e0e0e0; margin: 0; padding: 20px; }
-        .container { max-width: 1200px; margin: 0 auto; }
+        .container { max-width: 1400px; margin: 0 auto; }
         .header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px; border-bottom: 1px solid #333; padding-bottom: 10px; }
         .status-badge { background-color: #28a745; color: white; padding: 5px 10px; border-radius: 4px; font-size: 0.9em; }
 
@@ -16,14 +16,20 @@
         .card h3 { margin-top: 0; color: #aaa; font-size: 0.9em; text-transform: uppercase; letter-spacing: 1px; }
         .big-number { font-size: 2.5em; font-weight: bold; color: #fff; }
         .sub-text { font-size: 0.8em; color: #888; }
+        .sub-text.warning { color: #ffc107; }
 
         canvas { width: 100% !important; height: 300px !important; }
-        .row-stats { grid-column: span 2; display: flex; gap: 20px; margin-bottom: 20px; }
-        .stat-box { flex: 1; background: #2d2d2d; padding: 20px; border-radius: 8px; text-align: center; }
+        /* Adjusted grid for 6 items */
+        .row-stats { display: grid; grid-template-columns: repeat(6, 1fr); gap: 15px; margin-bottom: 20px; }
+        .stat-box { background: #2d2d2d; padding: 20px; border-radius: 8px; text-align: center; }
 
-        /* Specific color for the score */
+        @media (max-width: 1200px) {
+            .row-stats { grid-template-columns: repeat(3, 1fr); }
+        }
+
         .score-good { color: #28a745; }
         .score-bad { color: #dc3545; }
+        .gpu-active { color: #76b900; } /* NVIDIA Green */
     </style>
 </head>
 <body>
@@ -48,10 +54,21 @@
                 <div class="sub-text">Inference Time</div>
             </div>
             <div class="stat-box">
-                <h3>System Load</h3>
+                <h3>CPU Load</h3>
                 <div class="big-number" id="cpuLoad">0%</div>
-                <div class="sub-text">CPU Usage</div>
+                <div class="sub-text">System</div>
             </div>
+            <div class="stat-box">
+                <h3>GPU Load</h3>
+                <div class="big-number gpu-active" id="gpuLoad">--</div>
+                <div class="sub-text">Compute Util</div>
+            </div>
+            <div class="stat-box">
+                <h3>GPU VRAM</h3>
+                <div class="big-number" id="vramLoad">--</div>
+                <div class="sub-text" id="vramMb">0 / 0 MB</div>
+            </div>
+
             <div class="stat-box">
                 <h3>Model F5 Score</h3>
                 <div class="big-number" id="f5Score">--</div>
@@ -80,24 +97,46 @@
             type: 'line',
             data: {
                 labels: [],
-                datasets: [{
-                    label: 'CPU %',
-                    borderColor: '#ff6384',
-                    data: [],
-                    tension: 0.4,
-                    fill: false
-                }, {
-                    label: 'RAM %',
-                    borderColor: '#36a2eb',
-                    data: [],
-                    tension: 0.4,
-                    fill: false
-                }]
+                datasets: [
+                    {
+                        label: 'CPU %',
+                        borderColor: '#ff6384',
+                        backgroundColor: 'rgba(255, 99, 132, 0.1)',
+                        data: [],
+                        tension: 0.4,
+                        fill: false
+                    },
+                    {
+                        label: 'RAM %',
+                        borderColor: '#36a2eb',
+                        backgroundColor: 'rgba(54, 162, 235, 0.1)',
+                        data: [],
+                        tension: 0.4,
+                        fill: false
+                    },
+                    {
+                        label: 'GPU Util %',
+                        borderColor: '#76b900', // NVIDIA Green
+                        borderDash: [5, 5],
+                        data: [],
+                        tension: 0.1,
+                        fill: false
+                    },
+                    {
+                        label: 'VRAM %',
+                        borderColor: '#9d00ff', // Purple
+                        data: [],
+                        tension: 0.4,
+                        fill: false
+                    }
+                ]
             },
             options: {
                 responsive: true,
+                interaction: { mode: 'index', intersect: false },
                 scales: { y: { beginAtZero: true, max: 100 } },
-                animation: { duration: 0 }
+                animation: { duration: 0 },
+                elements: { point: { radius: 0 } } // Hide points for cleaner look
             }
         });
 
@@ -139,38 +178,47 @@
         }
 
         function updateDashboard(metrics) {
-            // Update Top Cards
+            // Update Text Cards
             document.getElementById('totalDocs').innerText = metrics.total_processed_docs || 0;
             document.getElementById('latency').innerText = (metrics.last_inference_ms || 0) + ' ms';
             document.getElementById('cpuLoad').innerText = (metrics.system_cpu_percent || 0) + '%';
 
-            // NEW: Update F5 Score
+            // GPU Stats
+            if (metrics.gpu_util_percent !== undefined) {
+                document.getElementById('gpuLoad').innerText = metrics.gpu_util_percent + '%';
+                document.getElementById('vramLoad').innerText = metrics.gpu_mem_percent + '%';
+                document.getElementById('vramMb').innerText = `${metrics.gpu_mem_used_mb} MB used`;
+            } else {
+                document.getElementById('gpuLoad').innerText = "N/A";
+                document.getElementById('gpuLoad').style.color = "#666";
+                document.getElementById('vramLoad').innerText = "N/A";
+            }
+
+            // F5 Score
             const f5 = metrics.model_f5_score;
             const f5El = document.getElementById('f5Score');
-
             if (f5) {
                 f5El.innerText = f5;
-                // Simple visual cue: Green if > 0.85, else Red
-                if (parseFloat(f5) >= 0.85) {
-                    f5El.className = 'big-number score-good';
-                } else {
-                    f5El.className = 'big-number score-bad';
-                }
+                f5El.className = parseFloat(f5) >= 0.85 ? 'big-number score-good' : 'big-number score-bad';
             } else {
                 f5El.innerText = 'Evaluating...';
-                f5El.className = 'big-number';
             }
 
-            // Update Resource Chart (Keep last 20 points)
+            // Update Resource Chart
             const now = new Date().toLocaleTimeString();
-            if (resourceChart.data.labels.length > 20) {
+            if (resourceChart.data.labels.length > 30) {
                 resourceChart.data.labels.shift();
-                resourceChart.data.datasets[0].data.shift();
-                resourceChart.data.datasets[1].data.shift();
+                resourceChart.data.datasets.forEach(d => d.data.shift());
             }
+
             resourceChart.data.labels.push(now);
             resourceChart.data.datasets[0].data.push(metrics.system_cpu_percent || 0);
             resourceChart.data.datasets[1].data.push(metrics.system_ram_percent || 0);
+
+            // Push GPU data (or null if not available to keep chart synced)
+            resourceChart.data.datasets[2].data.push(metrics.gpu_util_percent !== undefined ? metrics.gpu_util_percent : null);
+            resourceChart.data.datasets[3].data.push(metrics.gpu_mem_percent !== undefined ? metrics.gpu_mem_percent : null);
+
             resourceChart.update();
 
             // Update PII Chart
@@ -188,7 +236,7 @@
         }
 
         // Start loop
-        setInterval(fetchData, 2000);
+        setInterval(fetchData, 2000); // 2s polling
         fetchData();
     </script>
 </body>
