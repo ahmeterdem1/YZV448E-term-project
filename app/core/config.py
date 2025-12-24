@@ -40,6 +40,7 @@ class Settings(BaseSettings):
     # Thresholds
     MIN_F5_SCORE: float = 0.85
     AUTO_TRAIN_ON_PERFORMANCE_DROP: bool = True
+    CHECK_INTERVAL_SECONDS: int = 86400  # 24 hours
 
     class Config:
         env_file = ".env"

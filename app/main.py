@@ -67,8 +67,7 @@ async def monitor_model_performance():
     redis_client = Redis.from_url(settings.REDIS_URL, decode_responses=True)
     trainer = TrainingService()
 
-    # Check every hour (3600s) or more frequent for demo (e.g., 60s)
-    CHECK_INTERVAL = 600
+    CHECK_INTERVAL = settings.CHECK_INTERVAL_SECONDS
 
     while True:
         try:
