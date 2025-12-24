@@ -1,6 +1,9 @@
 # High Throughput PII Cleaner
 
-This repo holds our YZV448E term project: building a **GDPR-friendly text cleaner** that can detect personally identifiable information (PII) in large batches of student essays and anonymize them before downstream use.
+This repo holds our YZV448E term project: building a **GDPR-friendly text cleaner** that can detect personally identifiable information 
+(PII) in large batches of student essays and anonymize them before downstream use.
+
+[The dataset link](https://www.kaggle.com/competitions/pii-detection-removal-from-educational-data/overview)
 
 Before running the project, download the kaggle dataset and put it in a folder named data,
 next to "app".
